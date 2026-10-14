@@ -3,7 +3,7 @@ import sqlite3
 import uuid
 import math
 import requests
-from flask import Flask, request, jsonify, render_template_string, redirect
+from flask import Flask, request, jsonify, render_template, redirect
 from pypdf import PdfReader
 
 app = Flask(__name__)
@@ -52,150 +52,12 @@ def get_file_page_count(file_path):
     return 1
 
 # ==========================================
-# 1. FRONTEND: KIOSCO DE IMPRESIÓN
+# RUTAS DE INTERFAZ (HTML)
 # ==========================================
 @app.route('/')
 def index():
-    return render_template_string('''
-        <!DOCTYPE html>
-        <html lang="es">
-        <head>
-            <meta charset="UTF-8">
-            <meta name="viewport" content="width=device-width, initial-scale=1.0">
-            <title>Kiosco de Impresión Autoservicio</title>
-            <style>
-                :root { --primary: #2563eb; --primary-hover: #1d4ed8; --bg: #f8fafc; --card: #ffffff; --text: #0f172a; }
-                body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; background: var(--bg); color: var(--text); margin: 0; padding: 20px; }
-                .navbar { max-width: 500px; margin: 0 auto 15px auto; display: flex; justify-content: space-between; align-items: center; }
-                .navbar h1 { font-size: 1.2rem; margin: 0; color: #334155; }
-                .admin-link { color: var(--primary); text-decoration: none; font-size: 0.9rem; font-weight: 600; padding: 6px 12px; background: #eff6ff; border-radius: 6px; }
-                .container { max-width: 500px; background: var(--card); margin: 0 auto; padding: 25px; border-radius: 16px; box-shadow: 0 10px 25px -5px rgba(0,0,0,0.05); border: 1px solid #e2e8f0; }
-                .header-title { text-align: center; margin-bottom: 20px; }
-                .header-title h2 { margin: 0; color: #1e293b; font-size: 1.5rem; }
-                .header-title p { color: #64748b; font-size: 0.9rem; margin-top: 5px; }
-                label { font-weight: 600; display: block; margin-top: 15px; color: #334155; font-size: 0.9rem; }
-                input, select, button { width: 100%; padding: 12px; margin-top: 6px; box-sizing: border-box; border-radius: 8px; border: 1px solid #cbd5e1; font-size: 0.95rem; background: #fff; }
-                .range-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
-                button.btn-primary { background: var(--primary); color: white; border: none; font-weight: 600; margin-top: 20px; cursor: pointer; }
-                button.btn-primary:hover { background: var(--primary-hover); }
-                .price-card { background: #f0fdf4; border: 1px solid #bbf7d0; padding: 18px; border-radius: 10px; margin-top: 20px; text-align: center; }
-                .price-card .amount { font-size: 1.8rem; font-weight: 800; color: #166534; }
-                .price-card .details { font-size: 0.9rem; color: #15803d; margin-top: 6px; font-weight: 600; }
-                button.btn-pay { background: #16a34a; color: white; border: none; font-weight: 700; margin-top: 12px; cursor: pointer; font-size: 1rem; }
-                button.btn-pay:hover { background: #15803d; }
-            </style>
-        </head>
-        <body>
-            <div class="navbar">
-                <h1>🖨️ Kiosco Digital</h1>
-                <a href="/admin" class="admin-link">⚙️ Panel Admin</a>
-            </div>
-            
-            <div class="container">
-                <div class="header-title">
-                    <h2>Imprime tus Documentos</h2>
-                    <p>Configura las páginas exactas que necesitas e imprime al instante.</p>
-                </div>
+    return render_template('index.html')
 
-                <form id="uploadForm">
-                    <label>Selecciona Archivo (PDF, JPG, PNG):</label>
-                    <input type="file" id="fileInput" accept=".pdf, .jpg, .jpeg, .png" required>
-
-                    <label>Selección de Páginas:</label>
-                    <select id="rangeMode">
-                        <option value="all">Todas las páginas</option>
-                        <option value="custom">Rango Personalizado (Desde / Hasta)</option>
-                    </select>
-
-                    <div id="customRangeGroup" class="range-grid" style="display:none; margin-top: 10px;">
-                        <div>
-                            <label style="margin-top:0;">Desde pág:</label>
-                            <input type="number" id="pageFrom" value="1" min="1">
-                        </div>
-                        <div>
-                            <label style="margin-top:0;">Hasta pág:</label>
-                            <input type="number" id="pageTo" value="1" min="1">
-                        </div>
-                    </div>
-
-                    <label>Cantidad de Copias:</label>
-                    <input type="number" id="copies" value="1" min="1" required>
-
-                    <label>Tinta / Color:</label>
-                    <select id="color">
-                        <option value="false">Blanco y Negro ($50 / hoja física)</option>
-                        <option value="true">Color ($100 / hoja física)</option>
-                    </select>
-
-                    <label>Formato de Impresión:</label>
-                    <select id="doubleSided">
-                        <option value="false">Simple Faz (1 pág por hoja)</option>
-                        <option value="true">Doble Faz (2 págs por hoja - Ahorra hojas)</option>
-                    </select>
-
-                    <button type="submit" class="btn-primary">📊 Calcular Precio por Hojas</button>
-                </form>
-
-                <div id="resultSection" style="display:none;">
-                    <div class="price-card">
-                        <div class="amount" id="priceText">$0.00 ARS</div>
-                        <div class="details" id="detailsText"></div>
-                    </div>
-                    <button id="payBtn" class="btn-pay">💳 Ir a Pagar</button>
-                </div>
-            </div>
-
-            <script>
-                let currentJobId = null;
-
-                document.getElementById('rangeMode').addEventListener('change', (e) => {
-                    const customGroup = document.getElementById('customRangeGroup');
-                    customGroup.style.display = (e.target.value === 'custom') ? 'grid' : 'none';
-                });
-
-                document.getElementById('uploadForm').addEventListener('submit', async (e) => {
-                    e.preventDefault();
-                    const fileInput = document.getElementById('fileInput');
-                    if (!fileInput.files.length) return;
-
-                    const formData = new FormData();
-                    formData.append('file', fileInput.files[0]);
-                    formData.append('range_mode', document.getElementById('rangeMode').value);
-                    formData.append('page_from', document.getElementById('pageFrom').value);
-                    formData.append('page_to', document.getElementById('pageTo').value);
-                    formData.append('copies', document.getElementById('copies').value);
-                    formData.append('color', document.getElementById('color').value);
-                    formData.append('double_sided', document.getElementById('doubleSided').value);
-
-                    const res = await fetch('/api/upload', { method: 'POST', body: formData });
-                    const data = await res.json();
-
-                    if (data.job_id) {
-                        currentJobId = data.job_id;
-                        document.getElementById('priceText').innerText = `$${data.total_price} ARS`;
-                        document.getElementById('detailsText').innerText = 
-                            `📄 ${data.sheets_count} hoja(s) física(s) ocupada(s)\n(${data.printed_pages} págs impresas × ${document.getElementById('copies').value} copia/s)`;
-                        document.getElementById('resultSection').style.display = 'block';
-                    } else {
-                        alert(data.error || 'Error al procesar la selección');
-                    }
-                });
-
-                document.getElementById('payBtn').addEventListener('click', async () => {
-                    const res = await fetch(`/api/create-payment/${currentJobId}`, { method: 'POST' });
-                    const data = await res.json();
-                    if (data.checkout_url) {
-                        window.location.href = data.checkout_url;
-                    }
-                });
-            </script>
-        </body>
-        </html>
-    ''')
-
-# ==========================================
-# 2. PANEL DE ADMINISTRACIÓN (`/admin`)
-# ==========================================
 @app.route('/admin')
 def admin_panel():
     conn = sqlite3.connect('database.db')
@@ -220,110 +82,17 @@ def admin_panel():
     jobs = cursor.fetchall()
     conn.close()
 
-    return render_template_string('''
-        <!DOCTYPE html>
-        <html lang="es">
-        <head>
-            <meta charset="UTF-8">
-            <meta name="viewport" content="width=device-width, initial-scale=1.0">
-            <title>Panel de Control - Kiosco Admin</title>
-            <style>
-                body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; background: #f1f5f9; color: #0f172a; margin: 0; padding: 20px; }
-                .top-bar { max-width: 1000px; margin: 0 auto 20px auto; display: flex; justify-content: space-between; align-items: center; }
-                .top-bar h2 { margin: 0; color: #1e293b; }
-                .btn-back { background: #0f172a; color: white; text-decoration: none; padding: 8px 16px; border-radius: 6px; font-size: 0.9rem; font-weight: 600; }
-                .container { max-width: 1000px; margin: 0 auto; }
-                .stats-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 15px; margin-bottom: 25px; }
-                .stat-card { background: white; padding: 20px; border-radius: 12px; border: 1px solid #e2e8f0; }
-                .stat-card .label { font-size: 0.85rem; color: #64748b; font-weight: 600; text-transform: uppercase; }
-                .stat-card .value { font-size: 1.8rem; font-weight: 800; color: #0f172a; margin-top: 5px; }
-                .table-card { background: white; border-radius: 12px; border: 1px solid #e2e8f0; overflow-x: auto; }
-                table { width: 100%; border-collapse: collapse; text-align: left; font-size: 0.9rem; }
-                th { background: #f8fafc; padding: 14px 16px; color: #475569; font-weight: 700; border-bottom: 1px solid #e2e8f0; }
-                td { padding: 14px 16px; border-bottom: 1px solid #f1f5f9; }
-                .badge { padding: 4px 10px; border-radius: 20px; font-size: 0.75rem; font-weight: 700; display: inline-block; }
-                .badge-paid { background: #dcfce7; color: #15803d; }
-                .badge-pending { background: #fef3c7; color: #b45309; }
-                .filename { font-family: monospace; font-size: 0.85rem; color: #334155; }
-            </style>
-        </head>
-        <body>
-            <div class="top-bar">
-                <h2>📊 Panel de Administración</h2>
-                <a href="/" class="btn-back">⬅️ Volver al Kiosco</a>
-            </div>
-
-            <div class="container">
-                <div class="stats-grid">
-                    <div class="stat-card">
-                        <div class="label">Total Recaudado</div>
-                        <div class="value" style="color: #16a34a;">${{ "%.2f"|format(total_earned) }}</div>
-                    </div>
-                    <div class="stat-card">
-                        <div class="label">Trabajos Pagados</div>
-                        <div class="value">{{ paid_jobs_count }}</div>
-                    </div>
-                    <div class="stat-card">
-                        <div class="label">Pendientes</div>
-                        <div class="value" style="color: #d97706;">{{ pending_jobs_count }}</div>
-                    </div>
-                    <div class="stat-card">
-                        <div class="label">Hojas Físicas Usadas</div>
-                        <div class="value">{{ total_sheets_printed }}</div>
-                    </div>
-                </div>
-
-                <div class="table-card">
-                    <table>
-                        <thead>
-                            <tr>
-                                <th># Orden</th>
-                                <th>Archivo</th>
-                                <th>Rango Págs</th>
-                                <th>Hojas Físicas</th>
-                                <th>Detalles</th>
-                                <th>Monto</th>
-                                <th>Estado</th>
-                            </tr>
-                        </thead>
-                        <tbody>
-                            {% for job in jobs %}
-                            <tr>
-                                <td><strong>#{{ job[0] }}</strong></td>
-                                <td class="filename">{{ job[1].replace('uploads/', '') }}</td>
-                                <td>Págs {{ job[3] }} a {{ job[4] }}</td>
-                                <td><strong>{{ job[5] }} hojas</strong> ({{ job[6] }} cop.)</td>
-                                <td>
-                                    <small style="color:#64748b;">
-                                        {{ 'Color' if job[8] else 'B&N' }} | {{ 'Doble Faz' if job[7] else 'Simple Faz' }}
-                                    </small>
-                                </td>
-                                <td><strong>${{ "%.2f"|format(job[9]) }}</strong></td>
-                                <td>
-                                    {% if job[10] == 'paid' %}
-                                        <span class="badge badge-paid">PAGADO</span>
-                                    {% else %}
-                                        <span class="badge badge-pending">PENDIENTE</span>
-                                    {% endif %}
-                                </td>
-                            </tr>
-                            {% else %}
-                            <tr>
-                                <td colspan="7" style="text-align: center; color: #94a3b8; padding: 30px;">
-                                    No hay registros de impresiones aún.
-                                </td>
-                            </tr>
-                            {% endfor %}
-                        </tbody>
-                    </table>
-                </div>
-            </div>
-        </body>
-        </html>
-    ''', total_earned=total_earned, paid_jobs_count=paid_jobs_count, pending_jobs_count=pending_jobs_count, total_sheets_printed=total_sheets_printed, jobs=jobs)
+    return render_template(
+        'admin.html',
+        total_earned=total_earned,
+        paid_jobs_count=paid_jobs_count,
+        pending_jobs_count=pending_jobs_count,
+        total_sheets_printed=total_sheets_printed,
+        jobs=jobs
+    )
 
 # ==========================================
-# 3. API: SUBIDA Y CÁLCULO
+# API Y PROCESAMIENTO
 # ==========================================
 @app.route('/api/upload', methods=['POST'])
 def upload_file():
@@ -386,9 +155,6 @@ def upload_file():
         "sheets_count": total_sheets_count
     })
 
-# ==========================================
-# 4. API: CHECKOUT & WEBHOOK
-# ==========================================
 @app.route('/api/create-payment/<int:job_id>', methods=['POST'])
 def create_payment(job_id):
     payment_token = str(uuid.uuid4())
@@ -414,33 +180,16 @@ def mock_checkout(payment_token):
 
     job_id, total_price = job
 
-    return render_template_string('''
-        <!DOCTYPE html>
-        <html lang="es">
-        <head>
-            <meta charset="UTF-8">
-            <meta name="viewport" content="width=device-width, initial-scale=1.0">
-            <title>Pasarela Simulada</title>
-            <style>
-                body { font-family: sans-serif; background: #eef2f5; margin: 0; padding: 20px; }
-                .card { max-width: 400px; background: white; margin: 30px auto; padding: 25px; border-radius: 12px; box-shadow: 0 4px 20px rgba(0,0,0,0.1); }
-                .amount { font-size: 2.2em; color: #16a34a; text-align: center; margin: 20px 0; font-weight: bold; }
-                .btn-pay { background: #2563eb; color: white; border: none; padding: 14px; width: 100%; font-size: 16px; font-weight: bold; border-radius: 8px; cursor: pointer; }
-            </style>
-        </head>
-        <body>
-            <div class="card">
-                <h3 style="text-align:center; margin-top:0;">💳 Pasarela de Pago</h3>
-                <p style="text-align:center; color:#64748b;">Orden #{{ job_id }}</p>
-                <div class="amount">${{ "%.2f"|format(total_price) }} ARS</div>
-
-                <form action="/mock-gateway/process/{{ payment_token }}" method="POST">
-                    <button type="submit" class="btn-pay">Pagar Ahora</button>
-                </form>
-            </div>
-        </body>
-        </html>
-    ''', job_id=job_id, total_price=total_price, payment_token=payment_token)
+    return f'''
+        <div style="font-family:sans-serif; max-width:400px; margin:50px auto; padding:25px; border-radius:12px; box-shadow:0 4px 20px rgba(0,0,0,0.1); text-align:center;">
+            <h3>💳 Pasarela de Pago</h3>
+            <p>Orden #{job_id}</p>
+            <h1 style="color:#16a34a;">${total_price:.2f} ARS</h1>
+            <form action="/mock-gateway/process/{payment_token}" method="POST">
+                <button type="submit" style="background:#2563eb; color:white; border:none; padding:14px; width:100%; font-size:16px; font-weight:bold; border-radius:8px; cursor:pointer;">Pagar Ahora</button>
+            </form>
+        </div>
+    '''
 
 @app.route('/mock-gateway/process/<payment_token>', methods=['POST'])
 def process_mock_payment(payment_token):
@@ -501,29 +250,13 @@ def payment_webhook():
 
 @app.route('/success/<int:job_id>')
 def success_page(job_id):
-    return render_template_string('''
-        <!DOCTYPE html>
-        <html lang="es">
-        <head>
-            <meta charset="UTF-8">
-            <title>¡Pago Exitoso!</title>
-            <style>
-                body { font-family: sans-serif; text-align: center; padding: 50px; background: #f0fdf4; }
-                .card { background: white; max-width: 400px; margin: auto; padding: 30px; border-radius: 12px; box-shadow: 0 4px 10px rgba(0,0,0,0.05); }
-                h1 { color: #166534; }
-                a { display: inline-block; margin-top: 20px; color: #2563eb; font-weight: bold; text-decoration: none; }
-            </style>
-        </head>
-        <body>
-            <div class="card">
-                <h1>¡Pago Confirmado! 🎉</h1>
-                <p>Tu orden de impresión <strong>#{{ job_id }}</strong> fue procesada.</p>
-                <p>La impresora ya recibió el archivo y está imprimiendo.</p>
-                <a href="/">Imprimir Otro Archivo</a> | <a href="/admin">Ir al Panel Admin</a>
-            </div>
-        </body>
-        </html>
-    ''', job_id=job_id)
+    return f'''
+        <div style="font-family:sans-serif; text-align:center; padding:50px;">
+            <h1>¡Pago Confirmado! 🎉</h1>
+            <p>Tu orden de impresión <strong>#{job_id}</strong> fue procesada.</p>
+            <a href="/">Imprimir Otro Archivo</a> | <a href="/admin">Ir al Panel Admin</a>
+        </div>
+    '''
 
 if __name__ == '__main__':
     init_db()

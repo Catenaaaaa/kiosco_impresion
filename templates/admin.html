@@ -1,0 +1,99 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Panel de Control - Kiosco Admin</title>
+    <style>
+        body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; background: #f1f5f9; color: #0f172a; margin: 0; padding: 20px; }
+        .top-bar { max-width: 1000px; margin: 0 auto 20px auto; display: flex; justify-content: space-between; align-items: center; }
+        .top-bar h2 { margin: 0; color: #1e293b; }
+        .btn-back { background: #0f172a; color: white; text-decoration: none; padding: 8px 16px; border-radius: 6px; font-size: 0.9rem; font-weight: 600; }
+        .container { max-width: 1000px; margin: 0 auto; }
+        .stats-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 15px; margin-bottom: 25px; }
+        .stat-card { background: white; padding: 20px; border-radius: 12px; border: 1px solid #e2e8f0; }
+        .stat-card .label { font-size: 0.85rem; color: #64748b; font-weight: 600; text-transform: uppercase; }
+        .stat-card .value { font-size: 1.8rem; font-weight: 800; color: #0f172a; margin-top: 5px; }
+        .table-card { background: white; border-radius: 12px; border: 1px solid #e2e8f0; overflow-x: auto; }
+        table { width: 100%; border-collapse: collapse; text-align: left; font-size: 0.9rem; }
+        th { background: #f8fafc; padding: 14px 16px; color: #475569; font-weight: 700; border-bottom: 1px solid #e2e8f0; }
+        td { padding: 14px 16px; border-bottom: 1px solid #f1f5f9; }
+        .badge { padding: 4px 10px; border-radius: 20px; font-size: 0.75rem; font-weight: 700; display: inline-block; }
+        .badge-paid { background: #dcfce7; color: #15803d; }
+        .badge-pending { background: #fef3c7; color: #b45309; }
+        .filename { font-family: monospace; font-size: 0.85rem; color: #334155; }
+    </style>
+</head>
+<body>
+    <div class="top-bar">
+        <h2>📊 Panel de Administración</h2>
+        <a href="/" class="btn-back">⬅️ Volver al Kiosco</a>
+    </div>
+
+    <div class="container">
+        <div class="stats-grid">
+            <div class="stat-card">
+                <div class="label">Total Recaudado</div>
+                <div class="value" style="color: #16a34a;">${{ "%.2f"|format(total_earned) }}</div>
+            </div>
+            <div class="stat-card">
+                <div class="label">Trabajos Pagados</div>
+                <div class="value">{{ paid_jobs_count }}</div>
+            </div>
+            <div class="stat-card">
+                <div class="label">Pendientes</div>
+                <div class="value" style="color: #d97706;">{{ pending_jobs_count }}</div>
+            </div>
+            <div class="stat-card">
+                <div class="label">Hojas Físicas Usadas</div>
+                <div class="value">{{ total_sheets_printed }}</div>
+            </div>
+        </div>
+
+        <div class="table-card">
+            <table>
+                <thead>
+                    <tr>
+                        <th># Orden</th>
+                        <th>Archivo</th>
+                        <th>Rango Págs</th>
+                        <th>Hojas Físicas</th>
+                        <th>Detalles</th>
+                        <th>Monto</th>
+                        <th>Estado</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    {% for job in jobs %}
+                    <tr>
+                        <td><strong>#{{ job[0] }}</strong></td>
+                        <td class="filename">{{ job[1].replace('uploads/', '') }}</td>
+                        <td>Págs {{ job[3] }} a {{ job[4] }}</td>
+                        <td><strong>{{ job[5] }} hojas</strong> ({{ job[6] }} cop.)</td>
+                        <td>
+                            <small style="color:#64748b;">
+                                {{ 'Color' if job[8] else 'B&N' }} | {{ 'Doble Faz' if job[7] else 'Simple Faz' }}
+                            </small>
+                        </td>
+                        <td><strong>${{ "%.2f"|format(job[9]) }}</strong></td>
+                        <td>
+                            {% if job[10] == 'paid' %}
+                                <span class="badge badge-paid">PAGADO</span>
+                            {% else %}
+                                <span class="badge badge-pending">PENDIENTE</span>
+                            {% endif %}
+                        </td>
+                    </tr>
+                    {% else %}
+                    <tr>
+                        <td colspan="7" style="text-align: center; color: #94a3b8; padding: 30px;">
+                            No hay registros de impresiones aún.
+                        </td>
+                    </tr>
+                    {% endfor %}
+                </tbody>
+            </table>
+        </div>
+    </div>
+</body>
+</html>

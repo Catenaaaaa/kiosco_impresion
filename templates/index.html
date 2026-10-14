@@ -1,0 +1,134 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Kiosco de Impresión Autoservicio</title>
+    <style>
+        :root { --primary: #2563eb; --primary-hover: #1d4ed8; --bg: #f8fafc; --card: #ffffff; --text: #0f172a; }
+        body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; background: var(--bg); color: var(--text); margin: 0; padding: 20px; }
+        .navbar { max-width: 500px; margin: 0 auto 15px auto; display: flex; justify-content: space-between; align-items: center; }
+        .navbar h1 { font-size: 1.2rem; margin: 0; color: #334155; }
+        .admin-link { color: var(--primary); text-decoration: none; font-size: 0.9rem; font-weight: 600; padding: 6px 12px; background: #eff6ff; border-radius: 6px; }
+        .container { max-width: 500px; background: var(--card); margin: 0 auto; padding: 25px; border-radius: 16px; box-shadow: 0 10px 25px -5px rgba(0,0,0,0.05); border: 1px solid #e2e8f0; }
+        .header-title { text-align: center; margin-bottom: 20px; }
+        .header-title h2 { margin: 0; color: #1e293b; font-size: 1.5rem; }
+        .header-title p { color: #64748b; font-size: 0.9rem; margin-top: 5px; }
+        label { font-weight: 600; display: block; margin-top: 15px; color: #334155; font-size: 0.9rem; }
+        input, select, button { width: 100%; padding: 12px; margin-top: 6px; box-sizing: border-box; border-radius: 8px; border: 1px solid #cbd5e1; font-size: 0.95rem; background: #fff; }
+        .range-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+        button.btn-primary { background: var(--primary); color: white; border: none; font-weight: 600; margin-top: 20px; cursor: pointer; }
+        button.btn-primary:hover { background: var(--primary-hover); }
+        .price-card { background: #f0fdf4; border: 1px solid #bbf7d0; padding: 18px; border-radius: 10px; margin-top: 20px; text-align: center; }
+        .price-card .amount { font-size: 1.8rem; font-weight: 800; color: #166534; }
+        .price-card .details { font-size: 0.9rem; color: #15803d; margin-top: 6px; font-weight: 600; }
+        button.btn-pay { background: #16a34a; color: white; border: none; font-weight: 700; margin-top: 12px; cursor: pointer; font-size: 1rem; }
+        button.btn-pay:hover { background: #15803d; }
+    </style>
+</head>
+<body>
+    <div class="navbar">
+        <h1>🖨️ Kiosco Digital</h1>
+        <a href="/admin" class="admin-link">⚙️ Panel Admin</a>
+    </div>
+    
+    <div class="container">
+        <div class="header-title">
+            <h2>Imprime tus Documentos</h2>
+            <p>Configura las páginas exactas que necesitas e imprime al instante.</p>
+        </div>
+
+        <form id="uploadForm">
+            <label>Selecciona Archivo (PDF, JPG, PNG):</label>
+            <input type="file" id="fileInput" accept=".pdf, .jpg, .jpeg, .png" required>
+
+            <label>Selección de Páginas:</label>
+            <select id="rangeMode">
+                <option value="all">Todas las páginas</option>
+                <option value="custom">Rango Personalizado (Desde / Hasta)</option>
+            </select>
+
+            <div id="customRangeGroup" class="range-grid" style="display:none; margin-top: 10px;">
+                <div>
+                    <label style="margin-top:0;">Desde pág:</label>
+                    <input type="number" id="pageFrom" value="1" min="1">
+                </div>
+                <div>
+                    <label style="margin-top:0;">Hasta pág:</label>
+                    <input type="number" id="pageTo" value="1" min="1">
+                </div>
+            </div>
+
+            <label>Cantidad de Copias:</label>
+            <input type="number" id="copies" value="1" min="1" required>
+
+            <label>Tinta / Color:</label>
+            <select id="color">
+                <option value="false">Blanco y Negro ($50 / hoja física)</option>
+                <option value="true">Color ($100 / hoja física)</option>
+            </select>
+
+            <label>Formato de Impresión:</label>
+            <select id="doubleSided">
+                <option value="false">Simple Faz (1 pág por hoja)</option>
+                <option value="true">Doble Faz (2 págs por hoja - Ahorra hojas)</option>
+            </select>
+
+            <button type="submit" class="btn-primary">📊 Calcular Precio por Hojas</button>
+        </form>
+
+        <div id="resultSection" style="display:none;">
+            <div class="price-card">
+                <div class="amount" id="priceText">$0.00 ARS</div>
+                <div class="details" id="detailsText"></div>
+            </div>
+            <button id="payBtn" class="btn-pay">💳 Ir a Pagar</button>
+        </div>
+    </div>
+
+    <script>
+        let currentJobId = null;
+
+        document.getElementById('rangeMode').addEventListener('change', (e) => {
+            const customGroup = document.getElementById('customRangeGroup');
+            customGroup.style.display = (e.target.value === 'custom') ? 'grid' : 'none';
+        });
+
+        document.getElementById('uploadForm').addEventListener('submit', async (e) => {
+            e.preventDefault();
+            const fileInput = document.getElementById('fileInput');
+            if (!fileInput.files.length) return;
+
+            const formData = new FormData();
+            formData.append('file', fileInput.files[0]);
+            formData.append('range_mode', document.getElementById('rangeMode').value);
+            formData.append('page_from', document.getElementById('pageFrom').value);
+            formData.append('page_to', document.getElementById('pageTo').value);
+            formData.append('copies', document.getElementById('copies').value);
+            formData.append('color', document.getElementById('color').value);
+            formData.append('double_sided', document.getElementById('doubleSided').value);
+
+            const res = await fetch('/api/upload', { method: 'POST', body: formData });
+            const data = await res.json();
+
+            if (data.job_id) {
+                currentJobId = data.job_id;
+                document.getElementById('priceText').innerText = `$${data.total_price} ARS`;
+                document.getElementById('detailsText').innerText = 
+                    `📄 ${data.sheets_count} hoja(s) física(s) ocupada(s)\n(${data.printed_pages} págs impresas × ${document.getElementById('copies').value} copia/s)`;
+                document.getElementById('resultSection').style.display = 'block';
+            } else {
+                alert(data.error || 'Error al procesar la selección');
+            }
+        });
+
+        document.getElementById('payBtn').addEventListener('click', async () => {
+            const res = await fetch(`/api/create-payment/${currentJobId}`, { method: 'POST' });
+            const data = await res.json();
+            if (data.checkout_url) {
+                window.location.href = data.checkout_url;
+            }
+        });
+    </script>
+</body>
+</html>
