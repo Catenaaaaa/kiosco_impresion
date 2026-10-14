@@ -3,10 +3,11 @@ import sqlite3
 import uuid
 import math
 import requests
-from flask import Flask, request, jsonify, render_template, redirect
+from flask import Flask, request, jsonify, render_template, redirect, session
 from pypdf import PdfReader
 
 app = Flask(__name__)
+app.secret_key = 'kiosco_secret_key_thiago28'
 UPLOAD_FOLDER = 'uploads'
 os.makedirs(UPLOAD_FOLDER, exist_ok=True)
 app.config['UPLOAD_FOLDER'] = UPLOAD_FOLDER
@@ -19,6 +20,7 @@ def allowed_file(filename):
 def init_db():
     conn = sqlite3.connect('database.db')
     cursor = conn.cursor()
+    
     cursor.execute('''
         CREATE TABLE IF NOT EXISTS print_jobs (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -37,8 +39,29 @@ def init_db():
             created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
         )
     ''')
+
+    cursor.execute('''
+        CREATE TABLE IF NOT EXISTS settings (
+            key TEXT PRIMARY KEY,
+            value REAL NOT NULL
+        )
+    ''')
+
+    cursor.execute("INSERT OR IGNORE INTO settings (key, value) VALUES ('bw_price', 50.0)")
+    cursor.execute("INSERT OR IGNORE INTO settings (key, value) VALUES ('color_price', 100.0)")
+
     conn.commit()
     conn.close()
+
+def get_prices():
+    conn = sqlite3.connect('database.db')
+    cursor = conn.cursor()
+    cursor.execute("SELECT key, value FROM settings")
+    rows = cursor.fetchall()
+    conn.close()
+    
+    prices = {row[0]: row[1] for row in rows}
+    return prices.get('bw_price', 50.0), prices.get('color_price', 100.0)
 
 def get_file_page_count(file_path):
     ext = file_path.rsplit('.', 1)[1].lower()
@@ -52,14 +75,41 @@ def get_file_page_count(file_path):
     return 1
 
 # ==========================================
+# RUTAS DE AUTENTICACIÓN (LOGIN / LOGOUT)
+# ==========================================
+@app.route('/login', methods=['GET', 'POST'])
+def login():
+    error = None
+    if request.method == 'POST':
+        username = request.form.get('username')
+        password = request.form.get('password')
+
+        if username == 'admin' and password == 'Thiago28':
+            session['admin_logged_in'] = True
+            return redirect('/admin')
+        else:
+            error = 'Usuario o contraseña incorrectos'
+
+    return render_template('login.html', error=error)
+
+@app.route('/logout')
+def logout():
+    session.pop('admin_logged_in', None)
+    return redirect('/login')
+
+# ==========================================
 # RUTAS DE INTERFAZ (HTML)
 # ==========================================
 @app.route('/')
 def index():
-    return render_template('index.html')
+    bw_price, color_price = get_prices()
+    return render_template('index.html', bw_price=bw_price, color_price=color_price)
 
 @app.route('/admin')
 def admin_panel():
+    if not session.get('admin_logged_in'):
+        return redirect('/login')
+
     conn = sqlite3.connect('database.db')
     cursor = conn.cursor()
 
@@ -82,14 +132,38 @@ def admin_panel():
     jobs = cursor.fetchall()
     conn.close()
 
+    bw_price, color_price = get_prices()
+
     return render_template(
         'admin.html',
         total_earned=total_earned,
         paid_jobs_count=paid_jobs_count,
         pending_jobs_count=pending_jobs_count,
         total_sheets_printed=total_sheets_printed,
-        jobs=jobs
+        jobs=jobs,
+        bw_price=bw_price,
+        color_price=color_price
     )
+
+@app.route('/admin/update-prices', methods=['POST'])
+def update_prices():
+    if not session.get('admin_logged_in'):
+        return redirect('/login')
+
+    try:
+        new_bw = float(request.form.get('bw_price', 50.0))
+        new_color = float(request.form.get('color_price', 100.0))
+
+        conn = sqlite3.connect('database.db')
+        cursor = conn.cursor()
+        cursor.execute("UPDATE settings SET value = ? WHERE key = 'bw_price'", (new_bw,))
+        cursor.execute("UPDATE settings SET value = ? WHERE key = 'color_price'", (new_color,))
+        conn.commit()
+        conn.close()
+    except Exception as e:
+        print(f"Error actualizando precios: {e}")
+
+    return redirect('/admin')
 
 # ==========================================
 # API Y PROCESAMIENTO
@@ -134,7 +208,8 @@ def upload_file():
 
     total_sheets_count = sheets_per_copy * copies
 
-    price_per_sheet = 100 if color else 50
+    bw_price, color_price = get_prices()
+    price_per_sheet = color_price if color else bw_price
     total_price = total_sheets_count * price_per_sheet
 
     conn = sqlite3.connect('database.db')
