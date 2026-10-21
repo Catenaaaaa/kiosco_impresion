@@ -1,8 +1,138 @@
-cd ~/kiosco_impresion
-mkdir -p templates
+import os
+import sqlite3
+import uuid
+import math
+import requests
+from flask import Flask, request, jsonify, render_template_string, redirect, session
+from pypdf import PdfReader
 
-# 1. Crear templates/index.html
-cat << 'EOF' > templates/index.html
+app = Flask(__name__)
+app.secret_key = 'kiosco_secret_key_thiago28'
+UPLOAD_FOLDER = 'uploads'
+os.makedirs(UPLOAD_FOLDER, exist_ok=True)
+app.config['UPLOAD_FOLDER'] = UPLOAD_FOLDER
+
+ALLOWED_EXTENSIONS = {'pdf', 'png', 'jpg', 'jpeg'}
+
+def allowed_file(filename):
+    return '.' in filename and filename.rsplit('.', 1)[1].lower() in ALLOWED_EXTENSIONS
+
+def init_db():
+    conn = sqlite3.connect('database.db')
+    cursor = conn.cursor()
+    
+    cursor.execute('''
+        CREATE TABLE IF NOT EXISTS print_jobs (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            file_path TEXT NOT NULL,
+            file_type TEXT NOT NULL,
+            page_count INTEGER NOT NULL,
+            page_from INTEGER DEFAULT 1,
+            page_to INTEGER DEFAULT 1,
+            sheets_count INTEGER DEFAULT 1,
+            copies INTEGER NOT NULL,
+            is_double_sided BOOLEAN NOT NULL,
+            is_color BOOLEAN NOT NULL,
+            total_price REAL NOT NULL,
+            status TEXT DEFAULT 'pending',
+            payment_token TEXT,
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+        )
+    ''')
+
+    cursor.execute('''
+        CREATE TABLE IF NOT EXISTS settings (
+            key TEXT PRIMARY KEY,
+            value REAL NOT NULL
+        )
+    ''')
+
+    cursor.execute("INSERT OR IGNORE INTO settings (key, value) VALUES ('bw_price', 50.0)")
+    cursor.execute("INSERT OR IGNORE INTO settings (key, value) VALUES ('color_price', 100.0)")
+    cursor.execute("INSERT OR IGNORE INTO settings (key, value) VALUES ('paper_stock', 50000.0)")
+
+    conn.commit()
+    conn.close()
+
+def get_settings():
+    conn = sqlite3.connect('database.db')
+    cursor = conn.cursor()
+    cursor.execute("SELECT key, value FROM settings")
+    rows = cursor.fetchall()
+    conn.close()
+    
+    settings_dict = {row[0]: row[1] for row in rows}
+    return (
+        settings_dict.get('bw_price', 50.0),
+        settings_dict.get('color_price', 100.0),
+        int(settings_dict.get('paper_stock', 50000))
+    )
+
+def get_file_page_count(file_stream, filename):
+    ext = filename.rsplit('.', 1)[1].lower() if '.' in filename else ''
+    if ext == 'pdf':
+        try:
+            reader = PdfReader(file_stream)
+            return len(reader.pages)
+        except Exception as e:
+            print(f"Error al leer PDF: {e}")
+            return 1
+    return 1
+
+# ==========================================
+# PLANTILLAS HTML EMBEBIDAS
+# ==========================================
+HTML_LOGIN = '''
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Iniciar Sesión - Admin Kiosco</title>
+    <style>
+        :root { --primary: #2563eb; --primary-hover: #1d4ed8; --bg: #f8fafc; --card: #ffffff; --text: #0f172a; }
+        body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; background: var(--bg); color: var(--text); margin: 0; padding: 20px; display: flex; justify-content: center; align-items: center; min-height: 90vh; }
+        .login-card { width: 100%; max-width: 380px; background: var(--card); padding: 30px; border-radius: 16px; box-shadow: 0 10px 25px -5px rgba(0,0,0,0.05); border: 1px solid #e2e8f0; }
+        .header-title { text-align: center; margin-bottom: 25px; }
+        .header-title h2 { margin: 0; color: #1e293b; font-size: 1.4rem; }
+        .header-title p { color: #64748b; font-size: 0.85rem; margin-top: 5px; }
+        label { font-weight: 600; display: block; margin-top: 15px; color: #334155; font-size: 0.85rem; }
+        input { width: 100%; padding: 12px; margin-top: 6px; box-sizing: border-box; border-radius: 8px; border: 1px solid #cbd5e1; font-size: 0.95rem; background: #fff; }
+        button { width: 100%; padding: 12px; margin-top: 25px; background: var(--primary); color: white; border: none; font-weight: 600; border-radius: 8px; font-size: 0.95rem; cursor: pointer; }
+        button:hover { background: var(--primary-hover); }
+        .error-msg { background: #fef2f2; border: 1px solid #fecaca; color: #dc2626; padding: 10px; border-radius: 8px; font-size: 0.85rem; text-align: center; margin-bottom: 15px; }
+        .btn-back { display: block; text-align: center; margin-top: 15px; color: #64748b; text-decoration: none; font-size: 0.85rem; }
+        .btn-back:hover { color: #0f172a; }
+    </style>
+</head>
+<body>
+    <div class="login-card">
+        <div class="header-title">
+            <h2>🔒 Acceso Administrativo</h2>
+            <p>Ingresa tus credenciales para administrar el kiosco</p>
+        </div>
+
+        {% if error %}
+            <div class="error-msg">{{ error }}</div>
+        {% endif %}
+
+        <form action="/login" method="POST">
+            <label>Usuario:</label>
+            <input type="text" name="username" placeholder="Ingresa tu usuario" required>
+
+            <label>Contraseña:</label>
+            <input type="password" name="password" placeholder="Ingresa tu contraseña" required>
+
+            <button type="submit">Iniciar Sesión</button>
+        </form>
+
+        <a href="/" class="btn-back">⬅️ Volver al Kiosco</a>
+    </div>
+</body>
+</html>
+'''
+
+HTML_INDEX = '''
 <!DOCTYPE html>
 <html lang="es">
 <head>
@@ -151,7 +281,7 @@ cat << 'EOF' > templates/index.html
 
                 if (data.pages) {
                     maxPagesDetected = data.pages;
-                    infoBox.innerText = `📄 Documento detectado: ${maxPagesDetected} página(s) en total (Límite permitido: 1 - ${maxPagesDetected}).`;
+                    infoBox.innerText = '📄 Documento detectado: ' + maxPagesDetected + ' página(s) en total (Límite permitido: 1 - ' + maxPagesDetected + ').';
                     
                     pageFromInput.min = 1;
                     pageFromInput.max = maxPagesDetected;
@@ -192,9 +322,9 @@ cat << 'EOF' > templates/index.html
 
             if (data.job_id) {
                 currentJobId = data.job_id;
-                document.getElementById('priceText').innerText = `$${data.total_price} ARS`;
+                document.getElementById('priceText').innerText = '$' + data.total_price + ' ARS';
                 document.getElementById('detailsText').innerText = 
-                    `📄 ${data.sheets_count} hoja(s) física(s) ocupada(s)\n(${data.printed_pages} págs impresas × ${document.getElementById('copies').value} copia/s)`;
+                    '📄 ' + data.sheets_count + ' hoja(s) física(s) ocupada(s)\n(' + data.printed_pages + ' págs impresas × ' + document.getElementById('copies').value + ' copia/s)';
                 document.getElementById('resultSection').style.display = 'block';
             } else {
                 alert(data.error || 'Error al procesar la selección');
@@ -202,7 +332,7 @@ cat << 'EOF' > templates/index.html
         });
 
         document.getElementById('payBtn').addEventListener('click', async () => {
-            const res = await fetch(`/api/create-payment/${currentJobId}`, { method: 'POST' });
+            const res = await fetch('/api/create-payment/' + currentJobId, { method: 'POST' });
             const data = await res.json();
             if (data.checkout_url) {
                 window.location.href = data.checkout_url;
@@ -211,10 +341,9 @@ cat << 'EOF' > templates/index.html
     </script>
 </body>
 </html>
-EOF
+'''
 
-# 2. Crear templates/admin.html
-cat << 'EOF' > templates/admin.html
+HTML_ADMIN = '''
 <!DOCTYPE html>
 <html lang="es">
 <head>
@@ -349,98 +478,19 @@ cat << 'EOF' > templates/admin.html
     </div>
 </body>
 </html>
-EOF
+'''
 
-# 3. Crear app.py
-cat << 'EOF' > app.py
-import os
-import sqlite3
-import uuid
-import math
-import requests
-from flask import Flask, request, jsonify, render_template, redirect, session
-from pypdf import PdfReader
-
-app = Flask(__name__)
-app.secret_key = 'kiosco_secret_key_thiago28'
-UPLOAD_FOLDER = 'uploads'
-os.makedirs(UPLOAD_FOLDER, exist_ok=True)
-app.config['UPLOAD_FOLDER'] = UPLOAD_FOLDER
-
-ALLOWED_EXTENSIONS = {'pdf', 'png', 'jpg', 'jpeg'}
-
-def allowed_file(filename):
-    return '.' in filename and filename.rsplit('.', 1)[1].lower() in ALLOWED_EXTENSIONS
-
-def init_db():
-    conn = sqlite3.connect('database.db')
-    cursor = conn.cursor()
-    
-    cursor.execute('''
-        CREATE TABLE IF NOT EXISTS print_jobs (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            file_path TEXT NOT NULL,
-            file_type TEXT NOT NULL,
-            page_count INTEGER NOT NULL,
-            page_from INTEGER DEFAULT 1,
-            page_to INTEGER DEFAULT 1,
-            sheets_count INTEGER DEFAULT 1,
-            copies INTEGER NOT NULL,
-            is_double_sided BOOLEAN NOT NULL,
-            is_color BOOLEAN NOT NULL,
-            total_price REAL NOT NULL,
-            status TEXT DEFAULT 'pending',
-            payment_token TEXT,
-            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-        )
-    ''')
-
-    cursor.execute('''
-        CREATE TABLE IF NOT EXISTS settings (
-            key TEXT PRIMARY KEY,
-            value REAL NOT NULL
-        )
-    ''')
-
-    cursor.execute("INSERT OR IGNORE INTO settings (key, value) VALUES ('bw_price', 50.0)")
-    cursor.execute("INSERT OR IGNORE INTO settings (key, value) VALUES ('color_price', 100.0)")
-    cursor.execute("INSERT OR IGNORE INTO settings (key, value) VALUES ('paper_stock', 50000.0)")
-
-    conn.commit()
-    conn.close()
-
-def get_settings():
-    conn = sqlite3.connect('database.db')
-    cursor = conn.cursor()
-    cursor.execute("SELECT key, value FROM settings")
-    rows = cursor.fetchall()
-    conn.close()
-    
-    settings_dict = {row[0]: row[1] for row in rows}
-    return (
-        settings_dict.get('bw_price', 50.0),
-        settings_dict.get('color_price', 100.0),
-        int(settings_dict.get('paper_stock', 50000))
-    )
-
-def get_file_page_count(file_stream, filename):
-    ext = filename.rsplit('.', 1)[1].lower() if '.' in filename else ''
-    if ext == 'pdf':
-        try:
-            reader = PdfReader(file_stream)
-            return len(reader.pages)
-        except Exception as e:
-            print(f"Error al leer PDF: {e}")
-            return 1
-    return 1
-
+# ==========================================
 # BLOQUEO Y PROTECCIÓN GLOBAL
+# ==========================================
 @app.before_request
 def protect_admin_routes():
     if request.path.startswith('/admin') and not session.get('admin_logged_in'):
         return redirect('/login')
 
+# ==========================================
 # RUTAS DE AUTENTICACIÓN
+# ==========================================
 @app.route('/login', methods=['GET', 'POST'])
 def login():
     error = None
@@ -454,18 +504,20 @@ def login():
         else:
             error = 'Usuario o contraseña incorrectos'
 
-    return render_template('login.html', error=error)
+    return render_template_string(HTML_LOGIN, error=error)
 
 @app.route('/logout')
 def logout():
     session.clear()
     return redirect('/login')
 
+# ==========================================
 # RUTAS DE INTERFAZ (HTML)
+# ==========================================
 @app.route('/')
 def index():
     bw_price, color_price, paper_stock = get_settings()
-    return render_template('index.html', bw_price=bw_price, color_price=color_price, paper_stock=paper_stock)
+    return render_template_string(HTML_INDEX, bw_price=bw_price, color_price=color_price, paper_stock=paper_stock)
 
 @app.route('/admin')
 def admin_panel():
@@ -493,8 +545,8 @@ def admin_panel():
 
     bw_price, color_price, paper_stock = get_settings()
 
-    return render_template(
-        'admin.html',
+    return render_template_string(
+        HTML_ADMIN,
         total_earned=total_earned,
         paid_jobs_count=paid_jobs_count,
         pending_jobs_count=pending_jobs_count,
@@ -524,7 +576,9 @@ def update_settings():
 
     return redirect('/admin')
 
+# ==========================================
 # API Y PROCESAMIENTO
+# ==========================================
 @app.route('/api/analyze-file', methods=['POST'])
 def analyze_file():
     if 'file' not in request.files:
@@ -692,10 +746,7 @@ def payment_webhook():
         if job and job[6] != 'paid':
             file_path, copies, total_price, page_from, page_to, sheets_count, _ = job
             
-            # Cambiar estado a PAGADO
             cursor.execute("UPDATE print_jobs SET status = 'paid' WHERE id = ?", (job_id,))
-            
-            # DESCONTAR HOJAS DEL STOCK GENERAL
             cursor.execute("UPDATE settings SET value = MAX(0, value - ?) WHERE key = 'paper_stock'", (sheets_count,))
             
             conn.commit()
@@ -725,4 +776,3 @@ def success_page(job_id):
 if __name__ == '__main__':
     init_db()
     app.run(host='0.0.0.0', port=5000, debug=True)
-EOF
