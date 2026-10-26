@@ -21,6 +21,7 @@ def init_db():
     conn = sqlite3.connect('database.db')
     cursor = conn.cursor()
     
+    # Tabla principal
     cursor.execute('''
         CREATE TABLE IF NOT EXISTS print_jobs (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -30,16 +31,35 @@ def init_db():
             page_from INTEGER DEFAULT 1,
             page_to INTEGER DEFAULT 1,
             sheets_count INTEGER DEFAULT 1,
-            copies INTEGER NOT NULL,
-            is_double_sided BOOLEAN NOT NULL,
-            is_color BOOLEAN NOT NULL,
-            total_price REAL NOT NULL,
+            copies INTEGER DEFAULT 1,
+            is_double_sided BOOLEAN DEFAULT 0,
+            is_color BOOLEAN DEFAULT 0,
+            total_price REAL DEFAULT 0.0,
             status TEXT DEFAULT 'pending',
             payment_token TEXT,
             created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
         )
     ''')
 
+    # Migración defensiva si la base de datos ya existía con esquema viejo
+    columns_to_add = [
+        ("page_from", "INTEGER DEFAULT 1"),
+        ("page_to", "INTEGER DEFAULT 1"),
+        ("sheets_count", "INTEGER DEFAULT 1"),
+        ("copies", "INTEGER DEFAULT 1"),
+        ("is_double_sided", "BOOLEAN DEFAULT 0"),
+        ("is_color", "BOOLEAN DEFAULT 0"),
+        ("total_price", "REAL DEFAULT 0.0"),
+        ("status", "TEXT DEFAULT 'pending'"),
+        ("payment_token", "TEXT")
+    ]
+    for col_name, col_type in columns_to_add:
+        try:
+            cursor.execute(f"ALTER TABLE print_jobs ADD COLUMN {col_name} {col_type}")
+        except sqlite3.OperationalError:
+            pass
+
+    # Tabla de configuraciones
     cursor.execute('''
         CREATE TABLE IF NOT EXISTS settings (
             key TEXT PRIMARY KEY,
@@ -72,6 +92,7 @@ def get_file_page_count(file_stream, filename):
     ext = filename.rsplit('.', 1)[1].lower() if '.' in filename else ''
     if ext == 'pdf':
         try:
+            file_stream.seek(0)
             reader = PdfReader(file_stream)
             return len(reader.pages)
         except Exception as e:
@@ -80,7 +101,7 @@ def get_file_page_count(file_stream, filename):
     return 1
 
 # ==========================================
-# PLANTILLAS HTML EMBEBIDAS
+# PLANTILLAS HTML
 # ==========================================
 HTML_LOGIN = '''
 <!DOCTYPE html>
@@ -159,7 +180,7 @@ HTML_INDEX = '''
         button.btn-primary:hover { background: var(--primary-hover); }
         .price-card { background: #f0fdf4; border: 1px solid #bbf7d0; padding: 18px; border-radius: 10px; margin-top: 20px; text-align: center; }
         .price-card .amount { font-size: 1.8rem; font-weight: 800; color: #166534; }
-        .price-card .details { font-size: 0.9rem; color: #15803d; margin-top: 6px; font-weight: 600; }
+        .price-card .details { font-size: 0.9rem; color: #15803d; margin-top: 6px; font-weight: 600; whitespace: pre-line; }
         button.btn-pay { background: #16a34a; color: white; border: none; font-weight: 700; margin-top: 12px; cursor: pointer; font-size: 1rem; }
         button.btn-pay:hover { background: #15803d; }
     </style>
@@ -234,38 +255,30 @@ HTML_INDEX = '''
 
     <script>
         let currentJobId = null;
-        let maxPagesDetected = 1;
+        let totalFilePages = 1;
 
+        const fileInput = document.getElementById('fileInput');
         const pageFromInput = document.getElementById('pageFrom');
         const pageToInput = document.getElementById('pageTo');
+        const rangeModeSelect = document.getElementById('rangeMode');
+        const customGroup = document.getElementById('customRangeGroup');
 
-        function validateRangeInputs() {
-            let valFrom = intVal(pageFromInput.value, 1);
-            let valTo = intVal(pageToInput.value, maxPagesDetected);
+        rangeModeSelect.addEventListener('change', (e) => {
+            if (e.target.value === 'custom') {
+                customGroup.style.display = 'grid';
+                if (!pageFromInput.value) pageFromInput.value = 1;
+                if (!pageToInput.value) pageToInput.value = totalFilePages;
+            } else {
+                customGroup.style.display = 'none';
+            }
+        });
 
-            if (valFrom < 1) valFrom = 1;
-            if (valFrom > maxPagesDetected) valFrom = maxPagesDetected;
-
-            if (valTo < valFrom) valTo = valFrom;
-            if (valTo > maxPagesDetected) valTo = maxPagesDetected;
-
-            pageFromInput.value = valFrom;
-            pageToInput.value = valTo;
-        }
-
-        function intVal(val, fallback) {
-            const parsed = parseInt(val, 10);
-            return isNaN(parsed) ? fallback : parsed;
-        }
-
-        pageFromInput.addEventListener('input', validateRangeInputs);
-        pageToInput.addEventListener('input', validateRangeInputs);
-
-        document.getElementById('fileInput').addEventListener('change', async (e) => {
+        fileInput.addEventListener('change', async (e) => {
             const file = e.target.files[0];
             const infoBox = document.getElementById('fileInfoBox');
             if (!file) {
                 infoBox.style.display = 'none';
+                totalFilePages = 1;
                 return;
             }
 
@@ -280,62 +293,73 @@ HTML_INDEX = '''
                 const data = await res.json();
 
                 if (data.pages) {
-                    maxPagesDetected = data.pages;
-                    infoBox.innerText = '📄 Documento detectado: ' + maxPagesDetected + ' página(s) en total (Límite permitido: 1 - ' + maxPagesDetected + ').';
+                    totalFilePages = data.pages;
+                    infoBox.innerText = '📄 Documento detectado: ' + totalFilePages + ' página(s) en total.';
                     
                     pageFromInput.min = 1;
-                    pageFromInput.max = maxPagesDetected;
-                    pageFromInput.value = 1;
-
+                    pageFromInput.max = totalFilePages;
                     pageToInput.min = 1;
-                    pageToInput.max = maxPagesDetected;
-                    pageToInput.value = maxPagesDetected;
+                    pageToInput.max = totalFilePages;
+
+                    pageFromInput.value = 1;
+                    pageToInput.value = totalFilePages;
                 }
             } catch (err) {
                 infoBox.innerText = '⚠️ No se pudo analizar el total de páginas automáticamente.';
             }
         });
 
-        document.getElementById('rangeMode').addEventListener('change', (e) => {
-            const customGroup = document.getElementById('customRangeGroup');
-            customGroup.style.display = (e.target.value === 'custom') ? 'grid' : 'none';
-        });
-
         document.getElementById('uploadForm').addEventListener('submit', async (e) => {
             e.preventDefault();
-            const fileInput = document.getElementById('fileInput');
-            if (!fileInput.files.length) return;
+            if (!fileInput.files.length) {
+                alert('Por favor, selecciona un archivo primero.');
+                return;
+            }
 
-            validateRangeInputs();
+            let pFrom = parseInt(pageFromInput.value) || 1;
+            let pTo = parseInt(pageToInput.value) || totalFilePages;
+
+            if (pFrom < 1) pFrom = 1;
+            if (pTo > totalFilePages) pTo = totalFilePages;
+            if (pFrom > pTo) pFrom = pTo;
 
             const formData = new FormData();
             formData.append('file', fileInput.files[0]);
-            formData.append('range_mode', document.getElementById('rangeMode').value);
-            formData.append('page_from', pageFromInput.value);
-            formData.append('page_to', pageToInput.value);
-            formData.append('copies', document.getElementById('copies').value);
+            formData.append('range_mode', rangeModeSelect.value);
+            formData.append('page_from', pFrom);
+            formData.append('page_to', pTo);
+            formData.append('copies', document.getElementById('copies').value || 1);
             formData.append('color', document.getElementById('color').value);
             formData.append('double_sided', document.getElementById('doubleSided').value);
 
-            const res = await fetch('/api/upload', { method: 'POST', body: formData });
-            const data = await res.json();
+            try {
+                const res = await fetch('/api/upload', { method: 'POST', body: formData });
+                const data = await res.json();
 
-            if (data.job_id) {
-                currentJobId = data.job_id;
-                document.getElementById('priceText').innerText = '$' + data.total_price + ' ARS';
-                document.getElementById('detailsText').innerText = 
-                    '📄 ' + data.sheets_count + ' hoja(s) física(s) ocupada(s)\n(' + data.printed_pages + ' págs impresas × ' + document.getElementById('copies').value + ' copia/s)';
-                document.getElementById('resultSection').style.display = 'block';
-            } else {
-                alert(data.error || 'Error al procesar la selección');
+                if (res.ok && data.job_id) {
+                    currentJobId = data.job_id;
+                    document.getElementById('priceText').innerText = '$' + data.total_price.toFixed(2) + ' ARS';
+                    document.getElementById('detailsText').innerText = 
+                        '📄 ' + data.sheets_count + ' hoja(s) física(s) ocupada(s)\n(' + data.printed_pages + ' págs impresas × ' + document.getElementById('copies').value + ' copia/s)';
+                    document.getElementById('resultSection').style.display = 'block';
+                } else {
+                    alert(data.error || 'Error al procesar la selección');
+                }
+            } catch (err) {
+                alert('Error de conexión con el servidor.');
             }
         });
 
         document.getElementById('payBtn').addEventListener('click', async () => {
-            const res = await fetch('/api/create-payment/' + currentJobId, { method: 'POST' });
-            const data = await res.json();
-            if (data.checkout_url) {
-                window.location.href = data.checkout_url;
+            if (!currentJobId) return;
+            try {
+                const res = await fetch('/api/create-payment/' + currentJobId, { method: 'POST' });
+                const data = await res.json();
+                if (data.checkout_url) {
+                    window.location.href = data.checkout_url;
+                }
+            } catch (err) {
+                alert('Error al iniciar el pago.');
             }
         });
     </script>
@@ -481,16 +505,13 @@ HTML_ADMIN = '''
 '''
 
 # ==========================================
-# BLOQUEO Y PROTECCIÓN GLOBAL
+# RUTAS
 # ==========================================
 @app.before_request
 def protect_admin_routes():
     if request.path.startswith('/admin') and not session.get('admin_logged_in'):
         return redirect('/login')
 
-# ==========================================
-# RUTAS DE AUTENTICACIÓN
-# ==========================================
 @app.route('/login', methods=['GET', 'POST'])
 def login():
     error = None
@@ -511,9 +532,6 @@ def logout():
     session.clear()
     return redirect('/login')
 
-# ==========================================
-# RUTAS DE INTERFAZ (HTML)
-# ==========================================
 @app.route('/')
 def index():
     bw_price, color_price, paper_stock = get_settings()
@@ -576,9 +594,6 @@ def update_settings():
 
     return redirect('/admin')
 
-# ==========================================
-# API Y PROCESAMIENTO
-# ==========================================
 @app.route('/api/analyze-file', methods=['POST'])
 def analyze_file():
     if 'file' not in request.files:
@@ -600,7 +615,13 @@ def upload_file():
     if file.filename == '' or not allowed_file(file.filename):
         return jsonify({"error": "Formato no permitido (Usa PDF, JPG o PNG)"}), 400
 
-    copies = int(request.form.get('copies', 1))
+    try:
+        copies = int(request.form.get('copies', 1))
+        if copies < 1:
+            copies = 1
+    except (ValueError, TypeError):
+        copies = 1
+
     double_sided = request.form.get('double_sided') == 'true'
     color = request.form.get('color') == 'true'
     range_mode = request.form.get('range_mode', 'all')
@@ -608,7 +629,7 @@ def upload_file():
     file_path = os.path.join(app.config['UPLOAD_FOLDER'], file.filename)
     file.save(file_path)
 
-    ext = file.filename.rsplit('.', 1)[1].lower()
+    ext = file.filename.rsplit('.', 1)[1].lower() if '.' in file.filename else ''
     
     with open(file_path, 'rb') as f:
         total_pdf_pages = get_file_page_count(f, file.filename)
@@ -617,11 +638,9 @@ def upload_file():
         try:
             page_from = int(request.form.get('page_from', 1))
             page_to = int(request.form.get('page_to', total_pdf_pages))
-            
-            if page_from < 1 or page_to > total_pdf_pages or page_from > page_to:
-                return jsonify({"error": f"El rango ingresado debe estar entre la página 1 y la {total_pdf_pages}"}), 400
-
-        except ValueError:
+            page_from = max(1, min(page_from, total_pdf_pages))
+            page_to = max(page_from, min(page_to, total_pdf_pages))
+        except (ValueError, TypeError):
             page_from, page_to = 1, total_pdf_pages
     else:
         page_from, page_to = 1, total_pdf_pages
@@ -635,7 +654,6 @@ def upload_file():
 
     total_sheets_count = sheets_per_copy * copies
 
-    # VALIDACIÓN DE STOCK DE PAPEL
     bw_price, color_price, paper_stock = get_settings()
 
     if paper_stock <= 0:
