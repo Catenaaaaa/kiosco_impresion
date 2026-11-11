@@ -1,4 +1,5 @@
 import os
+import io
 import sqlite3
 import uuid
 import math
@@ -21,7 +22,6 @@ def init_db():
     conn = sqlite3.connect('database.db')
     cursor = conn.cursor()
     
-    # Tabla principal
     cursor.execute('''
         CREATE TABLE IF NOT EXISTS print_jobs (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -41,7 +41,6 @@ def init_db():
         )
     ''')
 
-    # Migración defensiva si la base de datos ya existía con esquema viejo
     columns_to_add = [
         ("page_from", "INTEGER DEFAULT 1"),
         ("page_to", "INTEGER DEFAULT 1"),
@@ -59,7 +58,6 @@ def init_db():
         except sqlite3.OperationalError:
             pass
 
-    # Tabla de configuraciones
     cursor.execute('''
         CREATE TABLE IF NOT EXISTS settings (
             key TEXT PRIMARY KEY,
@@ -92,8 +90,9 @@ def get_file_page_count(file_stream, filename):
     ext = filename.rsplit('.', 1)[1].lower() if '.' in filename else ''
     if ext == 'pdf':
         try:
+            stream_bytes = file_stream.read()
             file_stream.seek(0)
-            reader = PdfReader(file_stream)
+            reader = PdfReader(io.BytesIO(stream_bytes))
             return len(reader.pages)
         except Exception as e:
             print(f"Error al leer PDF: {e}")
@@ -101,7 +100,7 @@ def get_file_page_count(file_stream, filename):
     return 1
 
 # ==========================================
-# PLANTILLAS HTML
+# PLANTILLAS HTML EMBEBIDAS
 # ==========================================
 HTML_LOGIN = '''
 <!DOCTYPE html>
@@ -266,8 +265,8 @@ HTML_INDEX = '''
         rangeModeSelect.addEventListener('change', (e) => {
             if (e.target.value === 'custom') {
                 customGroup.style.display = 'grid';
-                if (!pageFromInput.value) pageFromInput.value = 1;
-                if (!pageToInput.value) pageToInput.value = totalFilePages;
+                pageFromInput.value = 1;
+                pageToInput.value = totalFilePages;
             } else {
                 customGroup.style.display = 'none';
             }
@@ -295,12 +294,6 @@ HTML_INDEX = '''
                 if (data.pages) {
                     totalFilePages = data.pages;
                     infoBox.innerText = '📄 Documento detectado: ' + totalFilePages + ' página(s) en total.';
-                    
-                    pageFromInput.min = 1;
-                    pageFromInput.max = totalFilePages;
-                    pageToInput.min = 1;
-                    pageToInput.max = totalFilePages;
-
                     pageFromInput.value = 1;
                     pageToInput.value = totalFilePages;
                 }
@@ -316,18 +309,11 @@ HTML_INDEX = '''
                 return;
             }
 
-            let pFrom = parseInt(pageFromInput.value) || 1;
-            let pTo = parseInt(pageToInput.value) || totalFilePages;
-
-            if (pFrom < 1) pFrom = 1;
-            if (pTo > totalFilePages) pTo = totalFilePages;
-            if (pFrom > pTo) pFrom = pTo;
-
             const formData = new FormData();
             formData.append('file', fileInput.files[0]);
             formData.append('range_mode', rangeModeSelect.value);
-            formData.append('page_from', pFrom);
-            formData.append('page_to', pTo);
+            formData.append('page_from', pageFromInput.value || 1);
+            formData.append('page_to', pageToInput.value || totalFilePages);
             formData.append('copies', document.getElementById('copies').value || 1);
             formData.append('color', document.getElementById('color').value);
             formData.append('double_sided', document.getElementById('doubleSided').value);
@@ -505,7 +491,7 @@ HTML_ADMIN = '''
 '''
 
 # ==========================================
-# RUTAS
+# RUTAS Y CONTROLADORES
 # ==========================================
 @app.before_request
 def protect_admin_routes():
@@ -638,6 +624,7 @@ def upload_file():
         try:
             page_from = int(request.form.get('page_from', 1))
             page_to = int(request.form.get('page_to', total_pdf_pages))
+            
             page_from = max(1, min(page_from, total_pdf_pages))
             page_to = max(page_from, min(page_to, total_pdf_pages))
         except (ValueError, TypeError):
@@ -712,7 +699,7 @@ def mock_checkout(payment_token):
 
     return f'''
         <div style="font-family:sans-serif; max-width:400px; margin:50px auto; padding:25px; border-radius:12px; box-shadow:0 4px 20px rgba(0,0,0,0.1); text-align:center;">
-            <h3>💳 Pasarela de Pago</h3>
+            ### 💳 Pasarela de Pago
             <p>Orden #{job_id}</p>
             <h1 style="color:#16a34a;">${total_price:.2f} ARS</h1>
             <form action="/mock-gateway/process/{payment_token}" method="POST">
