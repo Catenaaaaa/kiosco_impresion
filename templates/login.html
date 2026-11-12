@@ -1,0 +1,47 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Iniciar Sesión - Admin Kiosco</title>
+    <style>
+        :root { --primary: #2563eb; --primary-hover: #1d4ed8; --bg: #f8fafc; --card: #ffffff; --text: #0f172a; }
+        body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; background: var(--bg); color: var(--text); margin: 0; padding: 20px; display: flex; justify-content: center; align-items: center; min-height: 90vh; }
+        .login-card { width: 100%; max-width: 380px; background: var(--card); padding: 30px; border-radius: 16px; box-shadow: 0 10px 25px -5px rgba(0,0,0,0.05); border: 1px solid #e2e8f0; }
+        .header-title { text-align: center; margin-bottom: 25px; }
+        .header-title h2 { margin: 0; color: #1e293b; font-size: 1.4rem; }
+        .header-title p { color: #64748b; font-size: 0.85rem; margin-top: 5px; }
+        label { font-weight: 600; display: block; margin-top: 15px; color: #334155; font-size: 0.85rem; }
+        input { width: 100%; padding: 12px; margin-top: 6px; box-sizing: border-box; border-radius: 8px; border: 1px solid #cbd5e1; font-size: 0.95rem; background: #fff; }
+        button { width: 100%; padding: 12px; margin-top: 25px; background: var(--primary); color: white; border: none; font-weight: 600; border-radius: 8px; font-size: 0.95rem; cursor: pointer; }
+        button:hover { background: var(--primary-hover); }
+        .error-msg { background: #fef2f2; border: 1px solid #fecaca; color: #dc2626; padding: 10px; border-radius: 8px; font-size: 0.85rem; text-align: center; margin-bottom: 15px; }
+        .btn-back { display: block; text-align: center; margin-top: 15px; color: #64748b; text-decoration: none; font-size: 0.85rem; }
+        .btn-back:hover { color: #0f172a; }
+    </style>
+</head>
+<body>
+    <div class="login-card">
+        <div class="header-title">
+            <h2>🔒 Acceso Administrativo</h2>
+            <p>Ingresa tus credenciales para administrar el kiosco</p>
+        </div>
+
+        {% if error %}
+            <div class="error-msg">{{ error }}</div>
+        {% endif %}
+
+        <form action="/login" method="POST">
+            <label>Usuario:</label>
+            <input type="text" name="username" placeholder="Ingresa tu usuario" required>
+
+            <label>Contraseña:</label>
+            <input type="password" name="password" placeholder="Ingresa tu contraseña" required>
+
+            <button type="submit">Iniciar Sesión</button>
+        </form>
+
+        <a href="/" class="btn-back">⬅️ Volver al Kiosco</a>
+    </div>
+</body>
+</html>

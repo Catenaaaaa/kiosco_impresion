@@ -83,13 +83,97 @@ def get_file_page_count(file_stream, filename):
     return 1
 
 # ==========================================
-# RUTAS DE LA APLICACIÓN
+# PROTECCIÓN Y AUTENTICACIÓN
+# ==========================================
+@app.before_request
+def protect_admin_routes():
+    if request.path.startswith('/admin') and not session.get('admin_logged_in'):
+        return redirect('/login')
+
+@app.route('/login', methods=['GET', 'POST'])
+def login():
+    error = None
+    if request.method == 'POST':
+        username = request.form.get('username')
+        password = request.form.get('password')
+
+        if username == 'admin' and password == 'Thiago28':
+            session['admin_logged_in'] = True
+            return redirect('/admin')
+        else:
+            error = 'Usuario o contraseña incorrectos'
+
+    return render_template('login.html', error=error)
+
+@app.route('/logout')
+def logout():
+    session.clear()
+    return redirect('/login')
+
+# ==========================================
+# VISTAS PRINCIPALES
 # ==========================================
 @app.route('/')
 def index():
     bw_price, color_price, paper_stock = get_settings()
     return render_template('index.html', bw_price=bw_price, color_price=color_price, paper_stock=paper_stock)
 
+@app.route('/admin')
+def admin_panel():
+    conn = sqlite3.connect('database.db')
+    cursor = conn.cursor()
+
+    cursor.execute("SELECT SUM(total_price) FROM print_jobs WHERE status = 'paid'")
+    total_earned = cursor.fetchone()[0] or 0.0
+
+    cursor.execute("SELECT COUNT(*) FROM print_jobs WHERE status = 'paid'")
+    paid_jobs_count = cursor.fetchone()[0] or 0
+
+    cursor.execute("SELECT SUM(sheets_count) FROM print_jobs WHERE status = 'paid'")
+    total_sheets_printed = cursor.fetchone()[0] or 0
+
+    cursor.execute('''
+        SELECT id, file_path, file_type, page_from, page_to, sheets_count, copies, is_double_sided, is_color, total_price, status, created_at
+        FROM print_jobs ORDER BY id DESC
+    ''')
+    jobs = cursor.fetchall()
+    conn.close()
+
+    bw_price, color_price, paper_stock = get_settings()
+
+    return render_template(
+        'admin.html',
+        total_earned=total_earned,
+        paid_jobs_count=paid_jobs_count,
+        total_sheets_printed=total_sheets_printed,
+        jobs=jobs,
+        bw_price=bw_price,
+        color_price=color_price,
+        paper_stock=paper_stock
+    )
+
+@app.route('/admin/update-settings', methods=['POST'])
+def update_settings():
+    try:
+        new_bw = float(request.form.get('bw_price', 50.0))
+        new_color = float(request.form.get('color_price', 100.0))
+        new_stock = int(request.form.get('paper_stock', 50000))
+
+        conn = sqlite3.connect('database.db')
+        cursor = conn.cursor()
+        cursor.execute("UPDATE settings SET value = ? WHERE key = 'bw_price'", (new_bw,))
+        cursor.execute("UPDATE settings SET value = ? WHERE key = 'color_price'", (new_color,))
+        cursor.execute("UPDATE settings SET value = ? WHERE key = 'paper_stock'", (new_stock,))
+        conn.commit()
+        conn.close()
+    except Exception as e:
+        print(f"Error actualizando configuración: {e}")
+
+    return redirect('/admin')
+
+# ==========================================
+# API Y PROCESAMIENTO
+# ==========================================
 @app.route('/api/analyze-file', methods=['POST'])
 def analyze_file():
     if 'file' not in request.files:
@@ -135,7 +219,6 @@ def upload_file():
             page_from = int(request.form.get('page_from', 1))
             page_to = int(request.form.get('page_to', total_pdf_pages))
             
-            # Ajuste dinámico inteligente dentro de los límites del archivo real
             page_from = max(1, min(page_from, total_pdf_pages))
             page_to = max(page_from, min(page_to, total_pdf_pages))
         except (ValueError, TypeError):
@@ -285,7 +368,7 @@ def success_page(job_id):
         <div style="font-family:sans-serif; text-align:center; padding:50px;">
             <h1>¡Pago Confirmado! 🎉</h1>
             <p>Tu orden de impresión <strong>#{job_id}</strong> fue procesada.</p>
-            <a href="/">Imprimir Otro Archivo</a>
+            <a href="/">Imprimir Otro Archivo</a> | <a href="/admin">Ir al Panel Admin</a>
         </div>
     '''
 
