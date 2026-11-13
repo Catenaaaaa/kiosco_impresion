@@ -19,12 +19,13 @@
         label { font-weight: 600; display: block; margin-top: 15px; color: #334155; font-size: 0.9rem; }
         input, select, button { width: 100%; padding: 12px; margin-top: 6px; box-sizing: border-box; border-radius: 8px; border: 1px solid #cbd5e1; font-size: 0.95rem; background: #fff; }
         .file-info { background: #eff6ff; border: 1px solid #bfdbfe; color: #1e40af; padding: 10px 14px; border-radius: 8px; font-size: 0.85rem; font-weight: 600; margin-top: 8px; display: none; }
+        .error-alert { background: #fef2f2; border: 1px solid #fecaca; color: #dc2626; padding: 10px 14px; border-radius: 8px; font-size: 0.85rem; font-weight: 600; margin-top: 12px; display: none; }
         .range-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
         button.btn-primary { background: var(--primary); color: white; border: none; font-weight: 600; margin-top: 20px; cursor: pointer; }
         button.btn-primary:hover { background: var(--primary-hover); }
         .price-card { background: #f0fdf4; border: 1px solid #bbf7d0; padding: 18px; border-radius: 10px; margin-top: 20px; text-align: center; }
         .price-card .amount { font-size: 1.8rem; font-weight: 800; color: #166534; }
-        .price-card .details { font-size: 0.9rem; color: #15803d; margin-top: 6px; font-weight: 600; whitespace: pre-line; }
+        .price-card .details { font-size: 0.9rem; color: #15803d; margin-top: 6px; font-weight: 600; white-space: pre-line; }
         button.btn-pay { background: #16a34a; color: white; border: none; font-weight: 700; margin-top: 12px; cursor: pointer; font-size: 1rem; }
         button.btn-pay:hover { background: #15803d; }
     </style>
@@ -83,6 +84,8 @@
                 <option value="true">Doble Faz (2 págs por hoja - Ahorra hojas)</option>
             </select>
 
+            <div id="validationError" class="error-alert"></div>
+
             <button type="submit" class="btn-primary" {% if paper_stock <= 0 %}disabled style="background:#94a3b8; cursor:not-allowed;"{% endif %}>
                 {% if paper_stock > 0 %}📊 Calcular Precio por Hojas{% else %}❌ Sin Papel Disponible{% endif %}
             </button>
@@ -104,10 +107,38 @@
         const fileInput = document.getElementById('fileInput');
         const pageFromInput = document.getElementById('pageFrom');
         const pageToInput = document.getElementById('pageTo');
+        const copiesInput = document.getElementById('copies');
+        const colorSelect = document.getElementById('color');
+        const doubleSidedSelect = document.getElementById('doubleSided');
         const rangeModeSelect = document.getElementById('rangeMode');
         const customGroup = document.getElementById('customRangeGroup');
+        const resultSection = document.getElementById('resultSection');
+        const validationError = document.getElementById('validationError');
+
+        // Invalida cualquier presupuesto anterior apenas se modifica algún campo
+        function resetQuote() {
+            currentJobId = null;
+            resultSection.style.display = 'none';
+            validationError.style.display = 'none';
+        }
+
+        function showError(msg) {
+            validationError.innerText = '⚠️ ' + msg;
+            validationError.style.display = 'block';
+            resultSection.style.display = 'none';
+            currentJobId = null;
+        }
+
+        [pageFromInput, pageToInput, copiesInput].forEach(el => {
+            el.addEventListener('input', resetQuote);
+        });
+
+        [colorSelect, doubleSidedSelect].forEach(el => {
+            el.addEventListener('change', resetQuote);
+        });
 
         rangeModeSelect.addEventListener('change', (e) => {
+            resetQuote();
             if (e.target.value === 'custom') {
                 customGroup.style.display = 'grid';
                 pageFromInput.value = 1;
@@ -118,6 +149,7 @@
         });
 
         fileInput.addEventListener('change', async (e) => {
+            resetQuote();
             const file = e.target.files[0];
             const infoBox = document.getElementById('fileInfoBox');
             if (!file) {
@@ -149,19 +181,49 @@
 
         document.getElementById('uploadForm').addEventListener('submit', async (e) => {
             e.preventDefault();
+            resetQuote();
+
             if (!fileInput.files.length) {
-                alert('Por favor, selecciona un archivo primero.');
+                showError('Por favor, selecciona un archivo primero.');
                 return;
+            }
+
+            const copies = parseInt(copiesInput.value, 10);
+            if (isNaN(copies) || copies < 1) {
+                showError('La cantidad de copias debe ser al menos 1.');
+                return;
+            }
+
+            const pFrom = parseInt(pageFromInput.value, 10);
+            const pTo = parseInt(pageToInput.value, 10);
+
+            if (rangeModeSelect.value === 'custom') {
+                if (isNaN(pFrom) || isNaN(pTo)) {
+                    showError('Debes completar los números de página Desde y Hasta.');
+                    return;
+                }
+                if (pFrom < 1) {
+                    showError('La página inicial no puede ser menor a 1.');
+                    return;
+                }
+                if (pFrom > pTo) {
+                    showError('Rango inválido: la página "Desde" (' + pFrom + ') no puede ser mayor que "Hasta" (' + pTo + ').');
+                    return;
+                }
+                if (pTo > totalFilePages) {
+                    showError('El documento solo tiene ' + totalFilePages + ' página(s). No puedes elegir hasta la página ' + pTo + '.');
+                    return;
+                }
             }
 
             const formData = new FormData();
             formData.append('file', fileInput.files[0]);
             formData.append('range_mode', rangeModeSelect.value);
-            formData.append('page_from', pageFromInput.value || 1);
-            formData.append('page_to', pageToInput.value || totalFilePages);
-            formData.append('copies', document.getElementById('copies').value || 1);
-            formData.append('color', document.getElementById('color').value);
-            formData.append('double_sided', document.getElementById('doubleSided').value);
+            formData.append('page_from', pFrom || 1);
+            formData.append('page_to', pTo || totalFilePages);
+            formData.append('copies', copies);
+            formData.append('color', colorSelect.value);
+            formData.append('double_sided', doubleSidedSelect.value);
 
             try {
                 const res = await fetch('/api/upload', { method: 'POST', body: formData });
@@ -171,13 +233,13 @@
                     currentJobId = data.job_id;
                     document.getElementById('priceText').innerText = '$' + data.total_price.toFixed(2) + ' ARS';
                     document.getElementById('detailsText').innerText = 
-                        '📄 ' + data.sheets_count + ' hoja(s) física(s) ocupada(s)\n(' + data.printed_pages + ' págs impresas × ' + document.getElementById('copies').value + ' copia/s)';
-                    document.getElementById('resultSection').style.display = 'block';
+                        '📄 ' + data.sheets_count + ' hoja(s) física(s) ocupada(s)\n(Págs ' + data.page_from + ' a ' + data.page_to + ' · ' + data.printed_pages + ' págs × ' + copies + ' copia/s)';
+                    resultSection.style.display = 'block';
                 } else {
-                    alert(data.error || 'Error al procesar la selección');
+                    showError(data.error || 'Error al procesar la selección.');
                 }
             } catch (err) {
-                alert('Error de conexión con el servidor.');
+                showError('Error de conexión con el servidor.');
             }
         });
 
@@ -190,10 +252,9 @@
                     window.location.href = data.checkout_url;
                 }
             } catch (err) {
-                alert('Error al iniciar el pago.');
+                showError('Error al iniciar el pago.');
             }
         });
     </script>
 </body>
 </html>
-

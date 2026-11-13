@@ -198,33 +198,35 @@ def upload_file():
     try:
         copies = int(request.form.get('copies', 1))
         if copies < 1:
-            copies = 1
+            return jsonify({"error": "La cantidad de copias debe ser al menos 1."}), 400
     except (ValueError, TypeError):
-        copies = 1
+        return jsonify({"error": "Cantidad de copias inválida."}), 400
 
     double_sided = request.form.get('double_sided') == 'true'
     color = request.form.get('color') == 'true'
     range_mode = request.form.get('range_mode', 'all')
 
-    file_path = os.path.join(app.config['UPLOAD_FOLDER'], file.filename)
-    file.save(file_path)
-
     ext = file.filename.rsplit('.', 1)[1].lower() if '.' in file.filename else ''
-    
-    with open(file_path, 'rb') as f:
-        total_pdf_pages = get_file_page_count(f, file.filename)
+    total_pdf_pages = get_file_page_count(file.stream, file.filename)
 
-    if range_mode == 'custom' and ext == 'pdf':
+    if range_mode == 'custom':
         try:
             page_from = int(request.form.get('page_from', 1))
             page_to = int(request.form.get('page_to', total_pdf_pages))
-            
-            page_from = max(1, min(page_from, total_pdf_pages))
-            page_to = max(page_from, min(page_to, total_pdf_pages))
         except (ValueError, TypeError):
-            page_from, page_to = 1, total_pdf_pages
+            return jsonify({"error": "Rango de páginas inválido."}), 400
+
+        if page_from < 1:
+            return jsonify({"error": "La página inicial no puede ser menor a 1."}), 400
+        if page_from > page_to:
+            return jsonify({"error": f"Rango inválido: la página inicial ({page_from}) no puede ser mayor que la final ({page_to})."}), 400
+        if page_to > total_pdf_pages:
+            return jsonify({"error": f"El documento solo tiene {total_pdf_pages} página(s). No puedes seleccionar hasta la {page_to}."}), 400
     else:
         page_from, page_to = 1, total_pdf_pages
+
+    file_path = os.path.join(app.config['UPLOAD_FOLDER'], file.filename)
+    file.save(file_path)
 
     printed_pages = (page_to - page_from + 1)
 
@@ -261,7 +263,9 @@ def upload_file():
 
     return jsonify({
         "job_id": job_id, 
-        "total_price": round(total_price, 2), 
+        "total_price": round(total_price, 2),
+        "page_from": page_from,
+        "page_to": page_to,
         "printed_pages": printed_pages,
         "sheets_count": total_sheets_count
     })
@@ -375,3 +379,4 @@ def success_page(job_id):
 if __name__ == '__main__':
     init_db()
     app.run(host='0.0.0.0', port=5000, debug=True)
+
